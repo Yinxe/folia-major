@@ -32,6 +32,9 @@ const AUTH_MEMBERS: Record<string, string[]> = {
         'cancelLogin', 'checkLogin', 'describeLoginFailure', 'getLoginStatus', 'getLoginTexts', 'getLoginTtlMs', 'logout', 'openLoginPage',
         'opensLoginPageItself', 'signInRanOut', 'startLogin',
     ],
+    qishui: [
+        'cancelLogin', 'checkLogin', 'createQr', 'getLoginStatus', 'getLoginTexts', 'getLoginTtlMs', 'logout', 'startLogin',
+    ],
 };
 
 describe('the sign-in members of each built-in platform', () => {

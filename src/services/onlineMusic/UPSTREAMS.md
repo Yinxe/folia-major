@@ -90,6 +90,34 @@
   - `test/unit/spotify/` 下的测试（`spotifyApiBridge.test.ts`、`spotifyAudio.test.ts`、`spotifyAudioFiles.test.ts` 等）用替身，抓不到 Spotify 改了查询或答复。
   - 升级 node-librespot 前看它支持哪些系统；平台条目里的实测在同目录 `README.md` 的 `spotify/spotifyProvider.ts` 一条。
 
+## 汽水音乐（`qishui`，仅桌面端）
+
+- **上游**：汽水音乐 PC 客户端 3.7.0 的 `luna` / `passport` 接口，以及匿名可用的 h5 曲目口
+  `/luna/h5/track_v2?device_platform=web`。协议形状与实测口径来自本地参考仓库 `qishui-api`（MIT）。
+- **版本**：没有 npm 包。协议代码在 `electron/qishui/qishuiClient.cjs`，快照日期 2026-10-20；
+  只实现 Folia 用到的端点，端点表就在这个文件开头。
+- **怎么用**：主进程直接调用薄客户端，不起服务也不开端口（`electron/qishui/qishuiApiBridge.cjs`）。
+  设备身份、cookie 与 `safeStorage` 都在主进程；音频和封面的跨域在 `electron/qishui/mediaCors.cjs`。
+- **我们改了什么**：不发布包，也不引入 qishui-api 的 320 端点；新增端点只改
+  `qishuiClient.cjs` 的 `ENDPOINTS` 和桥接层的操作白名单。
+- **上游变了怎么跟**：
+  - 先看 h5 曲目口：`GET /luna/h5/track_v2?track_id=…&device_platform=web` 匿名返回 `track`、
+    `track_player.video_model`（JSON 字符串）、`lyric.content`（KRC）和 `expire_at`。
+  - 登录二维码：`/passport/web/get_qrcode/` 的 `data.qrcode` 是 data URI；`check_qrconnect` 的
+    `data.status` 是 1/2/3/4。
+  - 私人 FM 走 `FeedSongTab`（`POST /luna/pc/feed/song-tab`；通用路径会被 PC 设备拒绝）：偏好档放
+    `feed_preference: { preference_mode }`（`default` / `familiar` / `fresh`），场景档放扁平的
+    `feed_preference: { scene_mode_id }`。场景 id 来自 `FeedMode` 的短数字，不能用首页
+    `discover_radio` 的雪花 id；映射表在 `qishui/qishuiRecommendations.ts`。
+  - 电台页的推荐歌单走 `FeedPlaylistSquare`（`POST /luna/feed/playlist-square`，`category_id: 0`），
+    响应条目是 `items[].entity.playlist`。实际口径见 `docs/qishui.md`
+    的“推荐与私人 FM”。
+  - `test/unit/onlineMusic/qishuiNormalize.test.ts`、`qishuiProvider.test.ts` 用替身，抓不到上游改形状；
+    真实形状要在应用里用真账号验。
+  - 试听片段的 `preview.start` 不是 0。provider 把它写进 `ProviderAudioSource.clipStartMs`，
+    播放器按这个偏移对齐歌词；进度和时长仍是片段自己的。改这条规则前先读 `docs/qishui.md`
+    的“播放与试听片段”。
+
 ## Navidrome（不是 Omni 的 provider）
 
 - **上游**：用户自己的 Navidrome 服务，走 Subsonic API（`/rest/<接口>`），入口是 `src/services/navidromeService.ts`。歌词等扩展先问 `getOpenSubsonicExtensions` 再决定用不用。

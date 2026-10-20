@@ -19,6 +19,8 @@ UI / hooks / stores / app services
                  -> ytmTransport.ts（YouTube Music 的受限 IPC 边界，仅桌面端）
             -> spotifyProvider.ts
                  -> spotifyTransport.ts（Spotify 的受限 IPC 边界，仅桌面端）
+            -> qishuiProvider.ts
+                 -> qishuiTransport.ts（汽水音乐的受限 IPC 边界，仅桌面端）
        -> account/（各平台账号共用的逻辑，只从 omni 进入）
        -> login/（登录失败的分类和请求时限，不认识任何平台）
        -> providerAccountCache.ts / providerStorage.ts
@@ -27,7 +29,7 @@ UI / hooks / stores / app services
 
 图里的 `<id>Provider.ts` 和 `<id>Transport.ts` 都在各平台自己的目录 `<id>/` 里（例如 `qq/qqProvider.ts`）。网易云没有单独的 transport，请求在 `netease/netease.ts`。
 
-当前 registry 注册 `netease`、`kugou`、`qq`，以及桌面端的 `bodian`、`ytm`（YouTube Music）和 `spotify`。波点接入状态、接口与剩余验收见
+当前 registry 注册 `netease`、`kugou`、`qq`，以及桌面端的 `bodian`、`ytm`（YouTube Music）、`spotify` 和 `qishui`（汽水音乐）。波点接入状态、接口与剩余验收见
 [`docs/bodian.md`](../../../docs/bodian.md)；支持喜欢与自建歌单歌曲增删，收藏写入尚未实现。Navidrome 是独立的 Subsonic 服务，入口是 `src/services/navidromeService.ts`，不属于 Omni provider。
 
 登录的分工：provider 把后端的回答翻成 `LoginState`。失败带着平台的原话（`message`）和事实（`failure`：码、原话、HTTP 状态、要等多久，或者直接点名的情况，比如 QQ 的登录设备超限 `device-limit`）；这一次检查在网络这一层没拿到回答、码在平台那边还有效时标 `transient`，登录接着检查。要码与生成二维码拿不到 key / 图片时直接抛错，不交出空值。情况怎么分在 `login/loginFailureCase.ts`，平台自己的码是什么意思由它的 `describeLoginFailure` 说。登录失败后由登录调用一次 `omni.runLoginSelfCheck` 主动自检（`loginSelfCheck.ts`），结果进诊断报告；`omni.getLoginDiagnostics` 的 provider 段每一行都由 `login/loginDiagnosticReport.ts` 的 `diagnosticLine` 写，放进去的文字先洗过：登录凭据、IP 和账号不进报告。
@@ -104,7 +106,7 @@ UI / hooks / stores / app services
 | 搜索 | `searchSongs`、`searchProviderSongs` | 普通搜索按 active provider；显式 provider 或跨 provider 用第二个方法 |
 | 用户库 | `getUserPlaylists`、`getUserAlbums`、`getLikedSongIds`、`getProviderLikedSongIds`、`accountMoment`、`getCloudCollection` | 统一 `OmniCollection` / page 类型，账号快照可先展示再静默刷新。喜欢的歌读回来是 `{ ids, whole }`：adapter 在自己的上限处停下、或者说不准读没读到底时 `whole` 是 `false`；读不出来的一页必须抛错，不能当成更短的或空的列表交回。读账号的地方不自己写 `likedSongIds`：`account/accountRead.ts` 把读到的结果交给 `applyLikedRead`，由“修改”一行说的那条规则决定账号里留下什么；读失败就不交，账号里的保持原样；快照随后按 store 里此刻的 `likedSongIds` 存。回到 Folia 的窗口、进入主页这两个时机（`accountMoment`）不直接读整份：先向当前平台要“喜欢的歌”的数目（adapter 的 `getLikedSongCount`，一次请求，没有便宜办法的 adapter 不实现它），和手上的数目不一样才把喜欢的 id 整份读一遍；什么时候读只在 `account/readMoments.ts` 一处决定（见下面 `account/` 一条） |
 | 推荐 | `getHomeFeed`、`getPersonalFm`、`supportsDailySongs`、`getDailySongs`、`getRecommendationHistory*`、`dislikeSong` | 首页推荐与历史推荐仍由 Omni 路由；日推入口按能力显示，空结果不隐藏入口；私人 FM 一首歌都没交回时不出这张卡片（点了也没有可播的歌） |
-| 播放/歌词 | `getSongDetail`、`canPlaySong`、`getAudioSource`、`getAudioQualityLevels`、`resolveAudioQuality`、`getLyrics`、`getChorusRanges`、`getAlternateArtistName` | 输出 `OmniAudioSource` / `OmniLyricsResult`；Navidrome 歌词走独立 service。音质档位：档位从低到高是 `standard`、`high`、`ultra`、`lossless`、`hires`。`OnlinePlaybackProvider.audioQualityLevels`（可选）列出这个 provider 真正分得开的档位，不写就是 `standard`、`high`、`lossless`、`hires` 四档；`ultra` 只属于把它列出来的 provider（现在只有 YouTube Music，而且只对会员列出），列表可以随账号变，所以每次用到时现读。控制面板的音质选项只显示当前 provider 列出的档位（`getAudioQualityLevels`）。存的偏好仍是一个与 provider 无关的值，不迁移；它不在某个 provider 的列表里时，亮起的按钮和实际去要的档位都是不高于它的最近一档（`resolveAudioQuality`；`getAudioSource` 按歌曲所属的 provider 统一换算后再交给 adapter），所以存着 `ultra` 时，没列它的 provider 都按 `high` 去要。`getAudioSource` 交出地址时记下这个地址是按哪一档去要的、provider 有没有把它标成试听片段（`ProviderAudioSource.preview`；内存里，最近 200 个），`levelOfAudioSource(url)` 和 `isPreviewAudioSource(url)` 按地址查；扩展换进来的地址档位不明，也不算试听。有一个例外（2026-10-09）：列出了档位的 provider 在交回的 `quality` 里写的是它列出的另一档时，记的是它写的那一档（YouTube Music 的歌在 `ultra` 取不到、按 `high` 给的时候）；不这样的话，那份文件会顶着去要的那一档的名字存进媒体缓存，以后一直当那一档播。没列档位的 provider 不变，仍记去要的那一档。媒体缓存存一首歌时用它记下档位，播放只用和选项同一档的那一份，见下面 `resourceCache.ts` 一条 |
+| 播放/歌词 | `getSongDetail`、`canPlaySong`、`getAudioSource`、`getAudioQualityLevels`、`resolveAudioQuality`、`getLyrics`、`getChorusRanges`、`getAlternateArtistName` | 输出 `OmniAudioSource` / `OmniLyricsResult`；Navidrome 歌词走独立 service。音质档位：档位从低到高是 `standard`、`high`、`ultra`、`lossless`、`hires`。`OnlinePlaybackProvider.audioQualityLevels`（可选）列出这个 provider 真正分得开的档位，不写就是 `standard`、`high`、`lossless`、`hires` 四档；`ultra` 只属于把它列出来的 provider（现在只有 YouTube Music，而且只对会员列出），列表可以随账号变，所以每次用到时现读。控制面板的音质选项只显示当前 provider 列出的档位（`getAudioQualityLevels`）。存的偏好仍是一个与 provider 无关的值，不迁移；它不在某个 provider 的列表里时，亮起的按钮和实际去要的档位都是不高于它的最近一档（`resolveAudioQuality`；`getAudioSource` 按歌曲所属的 provider 统一换算后再交给 adapter），所以存着 `ultra` 时，没列它的 provider 都按 `high` 去要。`getAudioSource` 交出地址时记下这个地址是按哪一档去要的、provider 有没有把它标成试听片段（`ProviderAudioSource.preview`）以及片段在整首里的起点（`ProviderAudioSource.clipStartMs`，只有片段自身不从 0 秒开始时才写；内存里，最近 200 个），`levelOfAudioSource(url)`、`isPreviewAudioSource(url)` 和 `previewClipStartMsOfAudioSource(url)` 按地址查；歌词时钟用最后这个偏移对齐片段，扩展换进来的地址档位不明，也不算试听。有一个例外（2026-10-09）：列出了档位的 provider 在交回的 `quality` 里写的是它列出的另一档时，记的是它写的那一档（YouTube Music 的歌在 `ultra` 取不到、按 `high` 给的时候）；不这样的话，那份文件会顶着去要的那一档的名字存进媒体缓存，以后一直当那一档播。没列档位的 provider 不变，仍记去要的那一档。媒体缓存存一首歌时用它记下档位，播放只用和选项同一档的那一份，见下面 `resourceCache.ts` 一条 |
 | 听歌上报 | `canReportPlayback`、`reportPlayback` | 只有声明 `playbackReports` 的 provider 支持（当前仅网易云）；时长必须是真实累计播放秒数，频控在 `playbackReportGate.ts` |
 | 可用性 | `getSongAvailability`、`getSongReplacement` | 静态可用性只由 provider 的显式信号给出，`state: 'unavailable'` 只表示下架（taken-down），权限 / 付费 / 地区限制是 `unknown` + `reason: 'restricted'`；一次播放失败按 `failure/onlineFailureCase.ts` 分成有名字的情况，永不回写可用性、预取或缓存 |
 | 集合详情 | `getCollectionTracks`、`getCollectionDetail`、`getAlbumDetail`、`getArtistDetail`、`getArtistSongs`、`getArtistAlbums` | 按 collection 的 `providerId` 路由 |
@@ -117,6 +119,10 @@ UI / hooks / stores / app services
 ## Provider and cache files
 
 - `providerRegistry.ts`：注册、查找、按歌曲 `sourceRef` 选择 provider、能力检查。
+- `qishui/qishuiProvider.ts`：汽水音乐 adapter，仅桌面端；`qishui/qishuiTransport.ts` 通过受限 IPC 连接
+  `electron/qishui/qishuiApiBridge.cjs`。协议薄客户端在 `electron/qishui/qishuiClient.cjs`，只实现用到的端点；
+  音频和封面的跨域在 `electron/qishui/mediaCors.cjs`。`qishui/qishuiRecommendations.ts` 把汽水的推荐流
+  （偏好三档与场景）接成私人 FM。
 - `bodian/bodianProvider.ts`：波点 adapter；`bodian/bodianTransport.ts` 通过受限 IPC 连接 `electron/bodian/bodianApiBridge.cjs`。
   桥接调用固定版本的 `bodian-music-api`，协议实现在独立仓库维护；Folia 负责加密存储与媒体策略。
   `bodian/bodianCatalog.ts` / `bodian/bodianLibrary.ts` 处理集合与用户库，`bodian/bodianNormalize.ts` 统一数据，凭据不返回 renderer。
